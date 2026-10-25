@@ -382,8 +382,13 @@ function playOnce(index, onFinished) {
     if (!active || active.token !== token) return;
 
     active = null;
-    if (index !== 2 || !horn3Enabled) {
-      updateButton(index, false);
+ function updateButton(index, playing) {
+  if (index === 2 && horn3Enabled) {
+    buttons[index].classList.add("playing");
+    return;
+  }
+
+  buttons[index].classList.toggle("playing", playing);
 }
 
     try {
