@@ -1,0 +1,713 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111318">
+<title>メロディ吹鳴（改）</title>
+
+<style>
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Noto Sans JP", sans-serif;
+  background: #111318;
+  color: #f5f5f7;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+main {
+  width: 100%;
+  max-width: 620px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+}
+
+.description {
+  margin: 0 0 22px;
+  color: #a1a1aa;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.status {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  border: 1px solid #30323a;
+  border-radius: 12px;
+  background: #1b1d24;
+  color: #c8c8d0;
+  font-size: 13px;
+}
+
+.status-dot {
+  flex: 0 0 9px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f0b44d;
+}
+
+.status.ready .status-dot {
+  background: #39d98a;
+}
+
+.status.error .status-dot {
+  background: #ff6268;
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.sound-button {
+  min-width: 0;
+  min-height: 155px;
+  border: 1px solid #3a3d48;
+  border-radius: 20px;
+  background: #22252e;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: background 80ms ease, transform 80ms ease,
+    border-color 80ms ease;
+  outline: none;
+}
+
+.sound-button:focus-visible {
+  outline: 3px solid #83b7ff;
+  outline-offset: 4px;
+}
+
+.sound-button.playing {
+  background: #315fbd;
+  border-color: #80adff;
+  transform: scale(0.98);
+}
+
+.sound-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.symbol {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: #343844;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.playing .symbol {
+  background: #477bd7;
+}
+
+.name {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.hint {
+  color: #a8abb6;
+  font-size: 12px;
+  text-align: center;
+  padding: 0 5px;
+}
+
+.playing .hint {
+  color: #e0eaff;
+}
+
+.note {
+  margin-top: 18px;
+  color: #858894;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+@media (max-width: 360px) {
+  body {
+    padding: 14px;
+  }
+
+  .buttons {
+    gap: 10px;
+  }
+
+  .sound-button {
+    min-height: 145px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sound-button {
+    transition: none;
+  }
+}
+</style>
+</head>
+
+<body>
+<main>
+  <h1>メロディ吹鳴（改）</h1>
+
+
+
+  <div id="status" class="status" role="status" aria-live="polite">
+    <span class="status-dot"></span>
+    <span id="statusText">音声を読み込み中...</span>
+  </div>
+
+  <div class="buttons">
+    <button class="sound-button" id="button1" type="button" disabled>
+      <span class="symbol">1</span>
+      <span class="name">通勤型MH</span>
+    </button>
+
+    <button class="sound-button" id="button2" type="button" disabled>
+      <span class="symbol">2</span>
+      <span class="name">特急型MH</span>
+    </button>
+
+    <button class="sound-button" id="button3" type="button" disabled>
+      <span class="symbol">3</span>
+      <span class="name">車両連結部放送</span>
+    </button>
+  </div>
+
+
+</main>
+
+<script>
+"use strict";
+
+/* 音声ファイルのURL */
+const SOUND_URLS = [
+  "./sounds/horn1.mp3",
+  "./sounds/horn2.mp3",
+  "./sounds/horn3.mp3"
+];
+
+/* ホーン3の繰り返し間隔 */
+const REPEAT_DELAY_MS = 1500;
+
+const buttons = [
+  document.getElementById("button1"),
+  document.getElementById("button2"),
+  document.getElementById("button3")
+];
+
+const statusBox = document.getElementById("status");
+const statusText = document.getElementById("statusText");
+
+let audioContext = null;
+let audioBuffers = [null, null, null];
+let isReady = false;
+let isLoading = false;
+
+/*
+ * active:
+ * 現在再生中の音声
+ *
+ * priority:
+ * ホーン1またはホーン2による優先再生
+ *
+ * horn3Enabled:
+ * ホーン3の繰り返しが有効かどうか
+ */
+let active = null;
+let priority = null;
+let horn3Enabled = false;
+let horn3Timer = null;
+let generation = 0;
+
+function setStatus(message, type = "") {
+  statusText.textContent = message;
+  statusBox.className = "status";
+
+  if (type) {
+    statusBox.classList.add(type);
+  }
+}
+
+function createAudioContext() {
+  if (!audioContext) {
+    audioContext = new AudioContext({
+      latencyHint: "interactive"
+    });
+  }
+
+  return audioContext;
+}
+
+async function loadSound(url) {
+  const response = await fetch(url, {
+    cache: "force-cache"
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `音声を読み込めません (${response.status}): ${url}`
+    );
+  }
+
+  const data = await response.arrayBuffer();
+
+  return await createAudioContext().decodeAudioData(data);
+}
+
+async function initializeAudio() {
+  if (isLoading || isReady) return;
+
+  isLoading = true;
+  buttons.forEach(button => button.disabled = true);
+  setStatus("音声を読み込み中...");
+
+  try {
+    createAudioContext();
+
+    audioBuffers = await Promise.all(
+      SOUND_URLS.map(url => loadSound(url))
+    );
+
+    isReady = true;
+    buttons.forEach(button => button.disabled = false);
+
+    setStatus("準備完了", "ready");
+  } catch (error) {
+    console.error(error);
+    setStatus(
+      "読み込み失敗。音声ファイルのURLとサーバー設定を確認してください",
+      "error"
+    );
+  } finally {
+    isLoading = false;
+  }
+}
+
+function clearHorn3Timer() {
+  if (horn3Timer !== null) {
+    clearTimeout(horn3Timer);
+    horn3Timer = null;
+  }
+}
+
+function updateButton(index, playing) {
+  buttons[index].classList.toggle("playing", playing);
+}
+
+function stopActive() {
+  if (!active) return;
+
+  const old = active;
+  active = null;
+
+  updateButton(old.index, false);
+
+  if (old.source) {
+    old.source.onended = null;
+
+    try {
+      old.source.stop();
+    } catch (_) {}
+
+    try {
+      old.source.disconnect();
+    } catch (_) {}
+  }
+}
+
+/*
+ * どのホーンも同時に再生しない。
+ * 再生完了時にonFinishedを呼び出す。
+ */
+function playOnce(index, onFinished) {
+  if (!isReady || !audioContext) return;
+
+  stopActive();
+
+  const source = audioContext.createBufferSource();
+  source.buffer = audioBuffers[index];
+  source.loop = false;
+
+  const gain = audioContext.createGain();
+  gain.gain.value = 1.0;
+
+  source.connect(gain);
+  gain.connect(audioContext.destination);
+
+  const token = ++generation;
+
+  active = {
+    index,
+    source,
+    token
+  };
+
+  updateButton(index, true);
+
+  source.onended = () => {
+    if (!active || active.token !== token) return;
+
+    active = null;
+    updateButton(index, false);
+
+    try {
+      source.disconnect();
+      gain.disconnect();
+    } catch (_) {}
+
+    if (typeof onFinished === "function") {
+      onFinished();
+    }
+  };
+
+  source.start(0);
+}
+
+/*
+ * ホーン3の繰り返し処理。
+ * 1回の音声再生が終わってから1.5秒待ち、
+ * ファイルの先頭から再生する。
+ */
+function scheduleHorn3() {
+  clearHorn3Timer();
+
+  if (!horn3Enabled || priority || active) return;
+
+  horn3Timer = setTimeout(() => {
+    horn3Timer = null;
+
+    if (!horn3Enabled || priority || active) return;
+
+    playOnce(2, () => {
+      if (!horn3Enabled || priority) return;
+
+      scheduleHorn3();
+    });
+  }, REPEAT_DELAY_MS);
+}
+
+function startHorn3() {
+  horn3Enabled = true;
+  updateButton(2, true);
+
+  if (priority) {
+    /*
+     * 優先ホーンの再生が終わるまで待つ。
+     */
+    return;
+  }
+
+  clearHorn3Timer();
+  stopActive();
+
+  /*
+   * 有効化した直後はすぐに先頭から再生。
+   */
+  playOnce(2, () => {
+    if (horn3Enabled && !priority) {
+      scheduleHorn3();
+    }
+  });
+}
+
+function stopHorn3() {
+  horn3Enabled = false;
+  clearHorn3Timer();
+
+  if (active && active.index === 2) {
+    stopActive();
+  }
+
+  updateButton(2, false);
+}
+
+/*
+ * ホーン1・2の優先再生開始。
+ * ホーン3が有効なら、優先音声の終了後に
+ * 1.5秒待ってホーン3を先頭から再開する。
+ */
+async function startPriority(index) {
+  if (!isReady) return;
+
+  const token = ++generation;
+
+  clearHorn3Timer();
+  stopActive();
+
+  priority = {
+    index,
+    token
+  };
+
+  try {
+    if (audioContext.state !== "running") {
+      await audioContext.resume();
+    }
+  } catch (error) {
+    console.error(error);
+    finishPriority(token);
+    return;
+  }
+
+  /*
+   * resume中に別の操作が発生した場合は古い処理を無視。
+   */
+  if (!priority || priority.token !== token) return;
+
+  /*
+   * ホーン1は押し続けている間だけ再生するため、
+   * 押されていなければ再生を開始しない。
+   */
+  if (index === 0 && !pointerHeld[0] && !keyboardHeld[0]) {
+    finishPriority(token);
+    return;
+  }
+
+  playOnce(index, () => {
+    if (!priority || priority.token !== token) return;
+
+    if (index === 0 &&
+        (pointerHeld[0] || keyboardHeld[0])) {
+      /*
+       * ホーン1は音声の最後まで待たず、
+       * 押している間ループ再生する。
+       */
+      playPriorityLoop(token);
+      return;
+    }
+
+    finishPriority(token);
+  });
+
+  if (index === 0 && active && active.index === 0) {
+    active.source.loop = true;
+  }
+}
+
+/*
+ * ホーン1を押し続けている間のループ再生。
+ */
+function playPriorityLoop(token) {
+  if (!priority || priority.token !== token) return;
+  if (!pointerHeld[0] && !keyboardHeld[0]) {
+    finishPriority(token);
+    return;
+  }
+
+  playOnce(0, () => {
+    playPriorityLoop(token);
+  });
+
+  if (active && active.index === 0) {
+    active.source.loop = true;
+  }
+}
+
+/*
+ * 優先再生を終了し、ホーン3を必要に応じて再開する。
+ */
+function finishPriority(token) {
+  if (!priority || priority.token !== token) return;
+
+  priority = null;
+  stopActive();
+  updateButton(0, false);
+  updateButton(1, false);
+
+  if (horn3Enabled) {
+    scheduleHorn3();
+  }
+}
+
+/*
+ * ホーン1：押している間だけ鳴らす。
+ */
+const pointerHeld = [false, false];
+const keyboardHeld = [false, false];
+
+function pressHorn1() {
+  if (!isReady || pointerHeld[0] || keyboardHeld[0]) return;
+
+  pointerHeld[0] = true;
+  startPriority(0);
+}
+
+function releaseHorn1() {
+  pointerHeld[0] = false;
+  keyboardHeld[0] = false;
+
+  if (priority && priority.index === 0) {
+    const token = priority.token;
+    finishPriority(token);
+  }
+}
+
+/*
+ * ホーン2：1回押すと最後まで再生。
+ */
+function pressHorn2() {
+  if (!isReady) return;
+
+  startPriority(1);
+}
+
+/*
+ * ホーン3：押すたびにON/OFFを切り替える。
+ */
+function toggleHorn3() {
+  if (!isReady) return;
+
+  if (horn3Enabled) {
+    stopHorn3();
+  } else {
+    startHorn3();
+  }
+}
+
+/*
+ * マウス・タッチ・ペン操作
+ */
+buttons[0].addEventListener("pointerdown", event => {
+  event.preventDefault();
+
+  try {
+    buttons[0].setPointerCapture(event.pointerId);
+  } catch (_) {}
+
+  pressHorn1();
+});
+
+buttons[0].addEventListener("pointerup", releaseHorn1);
+buttons[0].addEventListener("pointercancel", releaseHorn1);
+buttons[0].addEventListener("lostpointercapture", releaseHorn1);
+
+buttons[1].addEventListener("pointerdown", event => {
+  event.preventDefault();
+
+  try {
+    buttons[1].setPointerCapture(event.pointerId);
+  } catch (_) {}
+
+  pressHorn2();
+});
+
+buttons[2].addEventListener("pointerdown", event => {
+  event.preventDefault();
+
+  try {
+    buttons[2].setPointerCapture(event.pointerId);
+  } catch (_) {}
+
+  toggleHorn3();
+});
+
+/*
+ * キーボード操作
+ */
+buttons[0].addEventListener("keydown", event => {
+  if (event.code === "Space" || event.code === "Enter") {
+    event.preventDefault();
+
+    if (event.repeat) return;
+
+    keyboardHeld[0] = true;
+    startPriority(0);
+  }
+});
+
+buttons[0].addEventListener("keyup", event => {
+  if (event.code === "Space" || event.code === "Enter") {
+    event.preventDefault();
+    releaseHorn1();
+  }
+});
+
+buttons[1].addEventListener("keydown", event => {
+  if (
+    (event.code === "Space" || event.code === "Enter") &&
+    !event.repeat
+  ) {
+    event.preventDefault();
+    pressHorn2();
+  }
+});
+
+buttons[2].addEventListener("keydown", event => {
+  if (
+    (event.code === "Space" || event.code === "Enter") &&
+    !event.repeat
+  ) {
+    event.preventDefault();
+    toggleHorn3();
+  }
+});
+
+/*
+ * フォーカスが外れた場合は押しっぱなしを解除。
+ */
+window.addEventListener("blur", () => {
+  releaseHorn1();
+
+  /*
+   * タブ移動中に音が鳴り続けないよう全音を停止。
+   */
+  stopHorn3();
+
+  if (priority) {
+    finishPriority(priority.token);
+  }
+
+  stopActive();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) return;
+
+  releaseHorn1();
+  stopHorn3();
+
+  if (priority) {
+    finishPriority(priority.token);
+  }
+
+  stopActive();
+});
+
+initializeAudio();
+</script>
+</body>
+</html>
