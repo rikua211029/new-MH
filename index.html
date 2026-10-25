@@ -382,7 +382,9 @@ function playOnce(index, onFinished) {
     if (!active || active.token !== token) return;
 
     active = null;
-    updateButton(index, false);
+    if (index !== 2 || !horn3Enabled) {
+      updateButton(index, false);
+}
 
     try {
       source.disconnect();
