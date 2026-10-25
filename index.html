@@ -39,13 +39,6 @@ h1 {
   font-size: 26px;
 }
 
-.description {
-  margin: 0 0 22px;
-  color: #a1a1aa;
-  font-size: 14px;
-  line-height: 1.7;
-}
-
 .status {
   min-height: 44px;
   display: flex;
@@ -139,24 +132,6 @@ h1 {
   font-weight: 650;
 }
 
-.hint {
-  color: #a8abb6;
-  font-size: 12px;
-  text-align: center;
-  padding: 0 5px;
-}
-
-.playing .hint {
-  color: #e0eaff;
-}
-
-.note {
-  margin-top: 18px;
-  color: #858894;
-  font-size: 12px;
-  line-height: 1.8;
-}
-
 @media (max-width: 360px) {
   body {
     padding: 14px;
@@ -209,14 +184,12 @@ h1 {
 <script>
 "use strict";
 
-/* 音声ファイルのURL */
 const SOUND_URLS = [
   "./sounds/horn1.mp3",
   "./sounds/horn2.mp3",
   "./sounds/horn3.mp3"
 ];
 
-/* 車両連結部放送の繰り返し間隔 */
 const REPEAT_DELAY_MS = 1500;
 
 const buttons = [
@@ -233,52 +206,38 @@ let audioBuffers = [null, null, null];
 let isReady = false;
 let isLoading = false;
 
-/* 再生状態 */
 let active = null;
 let priority = null;
 let horn3Enabled = false;
 let horn3Timer = null;
 let priorityGeneration = 0;
 
-/* ホーン1の押下状態 */
 const pointerHeld = [false, false];
 const keyboardHeld = [false, false];
 
-/* ステータス表示 */
 function setStatus(message, type = "") {
   statusText.textContent = message;
   statusBox.className = "status";
-
-  if (type) {
-    statusBox.classList.add(type);
-  }
+  if (type) statusBox.classList.add(type);
 }
 
-/* AudioContext */
 function createAudioContext() {
   if (!audioContext) {
     audioContext = new AudioContext({
       latencyHint: "interactive"
     });
   }
-
   return audioContext;
 }
 
-/* 音声を事前読み込み */
 async function loadSound(url) {
-  const response = await fetch(url, {
-    cache: "force-cache"
-  });
+  const response = await fetch(url, { cache: "force-cache" });
 
   if (!response.ok) {
-    throw new Error(
-      `音声を読み込めません (${response.status}): ${url}`
-    );
+    throw new Error(`音声を読み込めません (${response.status}): ${url}`);
   }
 
   const data = await response.arrayBuffer();
-
   return await createAudioContext().decodeAudioData(data);
 }
 
@@ -291,10 +250,7 @@ async function initializeAudio() {
 
   try {
     createAudioContext();
-
-    audioBuffers = await Promise.all(
-      SOUND_URLS.map(url => loadSound(url))
-    );
+    audioBuffers = await Promise.all(SOUND_URLS.map(loadSound));
 
     isReady = true;
     buttons.forEach(button => button.disabled = false);
@@ -310,13 +266,6 @@ async function initializeAudio() {
   }
 }
 
-/*
- * ボタン3は音声の再生状態ではなく、
- * horn3Enabled（ON/OFF）に表示を連動させる。
- *
- * そのため、ほかのホーンが鳴っても、
- * 1.5秒の待機中でも青い表示が消えない。
- */
 function syncHorn3Display() {
   buttons[2].classList.toggle("playing", horn3Enabled);
 }
@@ -328,12 +277,9 @@ function updateButton(index, playing) {
   }
 
   buttons[index].classList.toggle("playing", playing);
-
-  /* 他ボタンの更新後も必ずボタン3のON表示を維持 */
   syncHorn3Display();
 }
 
-/* 車両連結部放送の待機タイマーを解除 */
 function clearHorn3Timer() {
   if (horn3Timer !== null) {
     clearTimeout(horn3Timer);
@@ -341,7 +287,6 @@ function clearHorn3Timer() {
   }
 }
 
-/* 現在の音声を停止 */
 function stopActive() {
   if (!active) return;
 
@@ -359,22 +304,19 @@ function stopActive() {
 
     try {
       old.source.disconnect();
+      old.gain.disconnect();
     } catch (_) {}
   }
 }
 
-/*
- * 音声を1回再生する。
- * loop=trueなら押し続けるホーン1用。
- */
-function playSound(index, options = {}, onFinished = null) {
+function playSound(index, onFinished = null) {
   if (!isReady || !audioContext) return;
 
   stopActive();
 
   const source = audioContext.createBufferSource();
   source.buffer = audioBuffers[index];
-  source.loop = options.loop === true;
+  source.loop = false;
 
   const gain = audioContext.createGain();
   gain.gain.value = 1.0;
@@ -382,12 +324,7 @@ function playSound(index, options = {}, onFinished = null) {
   source.connect(gain);
   gain.connect(audioContext.destination);
 
-  const record = {
-    index,
-    source,
-    gain
-  };
-
+  const record = { index, source, gain };
   active = record;
   updateButton(index, true);
 
@@ -410,10 +347,6 @@ function playSound(index, options = {}, onFinished = null) {
   source.start(0);
 }
 
-/*
- * 車両連結部放送を再開するタイマー。
- * ほかの吹鳴が終了してから1.5秒待って再開する。
- */
 function scheduleHorn3() {
   clearHorn3Timer();
   syncHorn3Display();
@@ -432,14 +365,13 @@ function scheduleHorn3() {
   }, REPEAT_DELAY_MS);
 }
 
-/* 車両連結部放送を1回再生 */
 function playHorn3Once() {
   if (!horn3Enabled || priority || active) {
     syncHorn3Display();
     return;
   }
 
-  playSound(2, {}, () => {
+  playSound(2, () => {
     syncHorn3Display();
 
     if (horn3Enabled && !priority) {
@@ -447,32 +379,22 @@ function playHorn3Once() {
     }
   });
 
-  /* 再生中もON表示を維持 */
   syncHorn3Display();
 }
 
-/* 車両連結部放送をON */
 function startHorn3() {
   horn3Enabled = true;
   syncHorn3Display();
 
-  /*
-   * ほかのホーンが鳴っている場合は割り込まず、
-   * そのホーンの終了後に再開する。
-   */
   if (priority) return;
 
   clearHorn3Timer();
 
-  if (active) {
-    stopActive();
-  }
+  if (active) stopActive();
 
-  /* ONにした直後はすぐ再生 */
   playHorn3Once();
 }
 
-/* 車両連結部放送をOFF */
 function stopHorn3() {
   horn3Enabled = false;
   clearHorn3Timer();
@@ -484,21 +406,13 @@ function stopHorn3() {
   syncHorn3Display();
 }
 
-/*
- * 通勤型MH・特急型MHの優先再生。
- * ほかの音声は停止する。
- */
 async function startPriority(index) {
   if (!isReady) return;
 
   clearHorn3Timer();
 
   const token = ++priorityGeneration;
-
-  priority = {
-    index,
-    token
-  };
+  priority = { index, token };
 
   stopActive();
   syncHorn3Display();
@@ -513,7 +427,6 @@ async function startPriority(index) {
     return;
   }
 
-  /* 待機中に別の操作があれば古い処理を破棄 */
   if (!priority || priority.token !== token) return;
 
   if (index === 0 && !isHorn1Held()) {
@@ -521,12 +434,18 @@ async function startPriority(index) {
     return;
   }
 
+  /*
+   * 通勤型MHはループしない。
+   * 押下開始時に1回だけ再生し、音声終了後は停止する。
+   * 押しっぱなしでも再生し直さない。
+   */
   if (index === 0) {
-    /* 通勤型MH：押している間ループ再生 */
-    playSound(0, { loop: true });
+    playSound(0, () => {
+      if (!priority || priority.token !== token) return;
+      finishPriority(token);
+    });
   } else {
-    /* 特急型MH：ファイルを最後まで1回再生 */
-    playSound(1, {}, () => {
+    playSound(1, () => {
       if (!priority || priority.token !== token) return;
       finishPriority(token);
     });
@@ -539,11 +458,6 @@ function isHorn1Held() {
   return pointerHeld[0] || keyboardHeld[0];
 }
 
-/*
- * 優先ホーン終了。
- * 車両連結部放送がONなら、表示は維持したまま
- * 1.5秒後に放送を再開する。
- */
 function finishPriority(token) {
   if (!priority || priority.token !== token) return;
 
@@ -559,7 +473,6 @@ function finishPriority(token) {
   }
 }
 
-/* 通勤型MHの押下開始 */
 function pressHorn1() {
   if (!isReady || isHorn1Held()) return;
 
@@ -567,7 +480,6 @@ function pressHorn1() {
   startPriority(0);
 }
 
-/* 通勤型MHの押下終了 */
 function releaseHorn1() {
   pointerHeld[0] = false;
   keyboardHeld[0] = false;
@@ -577,13 +489,11 @@ function releaseHorn1() {
   }
 }
 
-/* 特急型MH：押すと最後まで再生 */
 function pressHorn2() {
   if (!isReady) return;
   startPriority(1);
 }
 
-/* 車両連結部放送：押すたびにON/OFF */
 function toggleHorn3() {
   if (!isReady) return;
 
@@ -594,9 +504,7 @@ function toggleHorn3() {
   }
 }
 
-/* マウス・タッチ・ペン操作 */
-
-/* 通勤型MH */
+/* マウス・タッチ・ペン操作：通勤型MH */
 buttons[0].addEventListener("pointerdown", event => {
   event.preventDefault();
 
@@ -671,10 +579,6 @@ buttons[2].addEventListener("keydown", event => {
   toggleHorn3();
 });
 
-/*
- * タブを離れたときは音声を停止して安全を確保する。
- * 車両連結部放送もOFFにし、表示と状態を一致させる。
- */
 function stopAllAudio() {
   releaseHorn1();
   stopHorn3();
@@ -690,12 +594,9 @@ function stopAllAudio() {
 window.addEventListener("blur", stopAllAudio);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    stopAllAudio();
-  }
+  if (document.hidden) stopAllAudio();
 });
 
-/* 起動時に音声を読み込む */
 initializeAudio();
 </script>
 </body>
