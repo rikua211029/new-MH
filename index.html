@@ -383,12 +383,17 @@ function playOnce(index, onFinished) {
 
     active = null;
  function updateButton(index, playing) {
-  if (index === 2 && horn3Enabled) {
-    buttons[index].classList.add("playing");
+  if (index === 2) {
+    buttons[2].classList.toggle("playing", horn3Enabled);
     return;
   }
 
   buttons[index].classList.toggle("playing", playing);
+
+  // 車両連結部放送がONなら、常にON表示を維持
+  if (horn3Enabled) {
+    buttons[2].classList.add("playing");
+  }
 }
 
     try {
