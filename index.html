@@ -191,6 +191,7 @@ const SOUND_URLS = [
 ];
 
 const REPEAT_DELAY_MS = 1500;
+const HORN1_HOLD_THRESHOLD_MS = 1200;
 
 const buttons = [
   document.getElementById("button1"),
@@ -212,8 +213,14 @@ let horn3Enabled = false;
 let horn3Timer = null;
 let priorityGeneration = 0;
 
+/* ホーン1の押下状態 */
 const pointerHeld = [false, false];
 const keyboardHeld = [false, false];
+
+let horn1PressTime = 0;
+let horn1Released = false;
+let horn1Committed = false;
+let horn1Timer = null;
 
 function setStatus(message, type = "") {
   statusText.textContent = message;
@@ -434,17 +441,14 @@ async function startPriority(index) {
     return;
   }
 
-  /*
-   * 通勤型MHはループしない。
-   * 押下開始時に1回だけ再生し、音声終了後は停止する。
-   * 押しっぱなしでも再生し直さない。
-   */
   if (index === 0) {
+    /* ホーン1は1回だけ再生 */
     playSound(0, () => {
       if (!priority || priority.token !== token) return;
       finishPriority(token);
     });
   } else {
+    /* ホーン2は最後まで1回再生 */
     playSound(1, () => {
       if (!priority || priority.token !== token) return;
       finishPriority(token);
@@ -458,35 +462,93 @@ function isHorn1Held() {
   return pointerHeld[0] || keyboardHeld[0];
 }
 
-function finishPriority(token) {
-  if (!priority || priority.token !== token) return;
+/* ホーン1の押下判定をリセット */
+function resetHorn1Press() {
+  if (horn1Timer !== null) {
+    clearTimeout(horn1Timer);
+    horn1Timer = null;
+  }
 
-  priority = null;
-  stopActive();
+  horn1PressTime = 0;
+  horn1Released = false;
+  horn1Committed = false;
+}
 
-  updateButton(0, false);
-  updateButton(1, false);
-  syncHorn3Display();
+/*
+ * 1.2秒経過時点で再生中なら、
+ * その後ボタンを離しても最後まで再生する。
+ */
+function commitHorn1() {
+  horn1Timer = null;
 
-  if (horn3Enabled) {
-    scheduleHorn3();
+  if (!priority || priority.index !== 0) return;
+
+  horn1Committed = true;
+
+  if (horn1Released) {
+    /* すでに離していれば、そのまま再生を続ける */
+    pointerHeld[0] = false;
+    keyboardHeld[0] = false;
   }
 }
 
+/* ホーン1の押下開始 */
 function pressHorn1() {
   if (!isReady || isHorn1Held()) return;
 
   pointerHeld[0] = true;
+  horn1PressTime = performance.now();
+  horn1Released = false;
+  horn1Committed = false;
+
+  if (horn1Timer !== null) {
+    clearTimeout(horn1Timer);
+  }
+
+  horn1Timer = setTimeout(
+    commitHorn1,
+    HORN1_HOLD_THRESHOLD_MS
+  );
+
   startPriority(0);
 }
 
+/* ホーン1の押下終了 */
 function releaseHorn1() {
+  const wasHeld = isHorn1Held();
+
   pointerHeld[0] = false;
   keyboardHeld[0] = false;
 
+  if (!wasHeld) return;
+
+  horn1Released = true;
+
+  if (horn1Timer !== null) {
+    clearTimeout(horn1Timer);
+    horn1Timer = null;
+  }
+
+  const heldDuration = performance.now() - horn1PressTime;
+  const reachedThreshold =
+    horn1Committed || heldDuration >= HORN1_HOLD_THRESHOLD_MS;
+
+  if (reachedThreshold) {
+    /*
+     * 1.2秒以上なら、音声が終わるまで再生を継続。
+     */
+    horn1Committed = true;
+    return;
+  }
+
+  /*
+   * 1.2秒未満なら、押下終了時点で停止する。
+   */
   if (priority && priority.index === 0) {
     finishPriority(priority.token);
   }
+
+  resetHorn1Press();
 }
 
 function pressHorn2() {
@@ -504,7 +566,6 @@ function toggleHorn3() {
   }
 }
 
-/* マウス・タッチ・ペン操作：通勤型MH */
 buttons[0].addEventListener("pointerdown", event => {
   event.preventDefault();
 
@@ -519,7 +580,6 @@ buttons[0].addEventListener("pointerup", releaseHorn1);
 buttons[0].addEventListener("pointercancel", releaseHorn1);
 buttons[0].addEventListener("lostpointercapture", releaseHorn1);
 
-/* 特急型MH */
 buttons[1].addEventListener("pointerdown", event => {
   event.preventDefault();
 
@@ -530,7 +590,6 @@ buttons[1].addEventListener("pointerdown", event => {
   pressHorn2();
 });
 
-/* 車両連結部放送 */
 buttons[2].addEventListener("pointerdown", event => {
   event.preventDefault();
 
@@ -541,7 +600,7 @@ buttons[2].addEventListener("pointerdown", event => {
   toggleHorn3();
 });
 
-/* キーボード操作：通勤型MH */
+/* キーボード操作：ホーン1 */
 buttons[0].addEventListener("keydown", event => {
   if (event.code !== "Space" && event.code !== "Enter") return;
 
@@ -549,8 +608,24 @@ buttons[0].addEventListener("keydown", event => {
   if (event.repeat) return;
 
   keyboardHeld[0] = true;
-  startPriority(0);
+  pressHorn1FromKeyboard();
 });
+
+function pressHorn1FromKeyboard() {
+  /* マウス操作と同じ押下判定を使用 */
+  horn1PressTime = performance.now();
+  horn1Released = false;
+  horn1Committed = false;
+
+  if (horn1Timer !== null) clearTimeout(horn1Timer);
+
+  horn1Timer = setTimeout(
+    commitHorn1,
+    HORN1_HOLD_THRESHOLD_MS
+  );
+
+  startPriority(0);
+}
 
 buttons[0].addEventListener("keyup", event => {
   if (event.code !== "Space" && event.code !== "Enter") return;
@@ -559,7 +634,6 @@ buttons[0].addEventListener("keyup", event => {
   releaseHorn1();
 });
 
-/* キーボード操作：特急型MH */
 buttons[1].addEventListener("keydown", event => {
   if (event.code !== "Space" && event.code !== "Enter") return;
 
@@ -569,7 +643,6 @@ buttons[1].addEventListener("keydown", event => {
   pressHorn2();
 });
 
-/* キーボード操作：車両連結部放送 */
 buttons[2].addEventListener("keydown", event => {
   if (event.code !== "Space" && event.code !== "Enter") return;
 
@@ -578,6 +651,25 @@ buttons[2].addEventListener("keydown", event => {
 
   toggleHorn3();
 });
+
+function finishPriority(token) {
+  if (!priority || priority.token !== token) return;
+
+  priority = null;
+  stopActive();
+
+  updateButton(0, false);
+  updateButton(1, false);
+  syncHorn3Display();
+
+  if (horn3Enabled) {
+    scheduleHorn3();
+  }
+
+  if (token === priorityGeneration) {
+    resetHorn1Press();
+  }
+}
 
 function stopAllAudio() {
   releaseHorn1();
@@ -588,6 +680,7 @@ function stopAllAudio() {
   }
 
   stopActive();
+  resetHorn1Press();
   syncHorn3Display();
 }
 
